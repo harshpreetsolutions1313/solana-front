@@ -22,6 +22,7 @@ import WishlistPage from "./pages/WishlistPage";
 import PurchasedProductsSection from "./components/PurchasedProductsSection";
 import { Toaster } from 'react-hot-toast';
 import PurchasedProductsPage from "./pages/PurchasedProductsPage";
+import { SolanaWalletProvider } from './components/SolanaWalletProvider';
 // import { WalletProvider } from './context/WalletContext';
 
 // import { createAppKit } from '@reown/appkit/react'
@@ -59,6 +60,8 @@ function App() {
     // <WalletProvider>
     // <WagmiProvider config={wagmiAdapter.wagmiConfig}>
     // <QueryClientProvider client={queryClient}>
+
+    <SolanaWalletProvider>
 
     <BrowserRouter>
       <RouteScrollToTop />
@@ -100,6 +103,8 @@ function App() {
         /> */}
       </Routes>
     </BrowserRouter>
+
+    </SolanaWalletProvider>
 
     // </QueryClientProvider>
     // </WagmiProvider>

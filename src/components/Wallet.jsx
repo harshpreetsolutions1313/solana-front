@@ -1,76 +1,72 @@
 import React, { useState, useEffect } from 'react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { Program, AnchorProvider, BN } from '@coral-xyz/anchor';
+import { 
+  TOKEN_PROGRAM_ID, 
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  getAccount
+} from '@solana/spl-token';
+import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS } from '../config/api';
+import IDL from '../config/solana/platform_treasury_idl.json';
 
-const { REACT_APP_CONTRACT_ADDRESS, REACT_APP_USDT_ADDRESS, REACT_APP_USDC_ADDRESS } = process.env;
+// Solana Configuration
+const PROGRAM_ID = new PublicKey('558HkyiK5Ki8gh7aQBzBmRvimrrR9ZuRJgvzni4uZGRg');
+
+// Token Mints (DEVNET)
+const USDT_MINT = new PublicKey('DAwBSXe6w9g37wdE2tCrFbho3QHKZi4PjuBytQCULap2');
+const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
 
 const Wallet = () => {
-  const [tronWeb, setTronWeb] = useState(null);
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const { connection } = useConnection();
+  const wallet = useWallet();
+
   const [selectedToken, setSelectedToken] = useState('USDT');
   const [fundAmount, setFundAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [funding, setFunding] = useState(false);
+  const [program, setProgram] = useState(null);
+  const [treasuryPda, setTreasuryPda] = useState(null);
+  
   const [balances, setBalances] = useState({
     USDT: { balance: 0, totalFunded: 0, totalSpent: 0, available: 0 },
     USDC: { balance: 0, totalFunded: 0, totalSpent: 0, available: 0 }
   });
   const [fundingHistory, setFundingHistory] = useState([]);
 
+  const walletAddress = wallet.publicKey?.toBase58();
+  const isConnected = wallet.connected;
+
+  // Initialize Anchor program
+  useEffect(() => {
+    if (wallet.publicKey && connection) {
+      const provider = new AnchorProvider(
+        connection,
+        wallet,
+        { commitment: 'confirmed' }
+      );
+      
+      const program = new Program(IDL, PROGRAM_ID, provider);
+      setProgram(program);
+      
+      // Find treasury PDA
+      const [pda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('treasury')],
+        PROGRAM_ID
+      );
+      setTreasuryPda(pda);
+    }
+  }, [wallet.publicKey, connection, wallet]);
+
   const authHeaders = () => {
     const token = localStorage.getItem('userToken');
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Listen for wallet connection events from HeaderOne
-  useEffect(() => {
-    const handleWalletConnected = (event) => {
-      const { address, tronWeb } = event.detail;
-      setWalletAddress(address);
-      setTronWeb(tronWeb);
-      setIsConnected(true);
-    };
-
-    const handleWalletDisconnected = () => {
-      setWalletAddress(null);
-      setTronWeb(null);
-      setIsConnected(false);
-    };
-
-    window.addEventListener('tronWalletConnected', handleWalletConnected);
-    window.addEventListener('tronWalletDisconnected', handleWalletDisconnected);
-
-    return () => {
-      window.removeEventListener('tronWalletConnected', handleWalletConnected);
-      window.removeEventListener('tronWalletDisconnected', handleWalletDisconnected);
-    };
-  }, []);
-
-  // Check for existing TronLink connection on mount
-  useEffect(() => {
-    const checkExistingConnection = () => {
-      const savedAddress = localStorage.getItem('tronWalletAddress');
-
-      if (savedAddress && window.tronWeb && window.tronWeb.ready) {
-        const currentAddress = window.tronWeb.defaultAddress.base58;
-
-        if (currentAddress === savedAddress) {
-          setTronWeb(window.tronWeb);
-          setWalletAddress(currentAddress);
-          setIsConnected(true);
-        }
-      }
-    };
-
-    // Wait for TronLink to inject
-    const timer = setTimeout(checkExistingConnection, 1000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Fetch wallet balances
+  // Fetch wallet balances from backend
   const fetchBalances = async () => {
     if (!walletAddress || !isConnected) return;
 
@@ -103,7 +99,7 @@ const Wallet = () => {
     }
   };
 
-  // Fetch funding history
+  // Fetch funding history from backend
   const fetchFundingHistory = async () => {
     if (!walletAddress || !isConnected) return;
 
@@ -114,7 +110,7 @@ const Wallet = () => {
       );
 
       if (response.data.success) {
-        setFundingHistory(response.data.data.slice(0, 10)); // Last 10 fundings
+        setFundingHistory(response.data.data.slice(0, 10));
       }
     } catch (error) {
       console.error('Error fetching funding history:', error);
@@ -128,10 +124,10 @@ const Wallet = () => {
     }
   }, [walletAddress, isConnected]);
 
-  // Handle fund wallet
+  // Handle fund wallet - calls Solana deposit function
   const handleFundWallet = async () => {
-    if (!isConnected || !walletAddress || !tronWeb) {
-      toast.error('Please connect your TronLink wallet');
+    if (!isConnected || !wallet.publicKey || !program || !treasuryPda) {
+      toast.error('Please connect your Phantom or Solflare wallet');
       return;
     }
 
@@ -143,346 +139,108 @@ const Wallet = () => {
     setFunding(true);
 
     try {
-      // Ensure we're using the TRON addresses from env
-      const tokenAddress = selectedToken === 'USDT'
-        ? REACT_APP_USDT_ADDRESS
-        : REACT_APP_USDC_ADDRESS;
+      const mint = selectedToken === 'USDT' ? USDT_MINT : USDC_MINT;
+      const amount = new BN(parseFloat(fundAmount) * 1_000_000); // 6 decimals
 
-      const contractAddress = REACT_APP_CONTRACT_ADDRESS;
+      const userTokenAccount = await getAssociatedTokenAddress(mint, wallet.publicKey);
+      const treasuryTokenAccount = await getAssociatedTokenAddress(mint, treasuryPda, true);
 
-      console.log('🔍 Environment Variables Check:', {
-        contractAddress,
-        tokenAddress,
-        selectedToken
-      });
-
-      // Validate addresses are in TRON format (start with T)
-      if (!contractAddress || !contractAddress.startsWith('T')) {
-        toast.error('Invalid contract address in environment variables');
-        console.error('❌ Contract address must start with T, got:', contractAddress);
-        setFunding(false);
-        return;
-      }
-
-      if (!tokenAddress || !tokenAddress.startsWith('T')) {
-        toast.error('Invalid token address in environment variables');
-        console.error('❌ Token address must start with T, got:', tokenAddress);
-        setFunding(false);
-        return;
-      }
-
-      // Convert amount to SUN (TRX uses 6 decimals for USDT/USDC on TRON)
-      const decimals = 6;
-      const amountInSun = Math.floor(parseFloat(fundAmount) * Math.pow(10, decimals));
-
-      console.log('🔄 Funding wallet with:', {
-        token: selectedToken,
-        amount: fundAmount,
-        amountInSun: amountInSun,
-        tokenAddress: tokenAddress,
-        contractAddress: contractAddress,
-        walletAddress: walletAddress
-      });
-
-      // Get token contract instance using base58 address
-      let tokenContract;
+      // Check if treasury token account exists, if not create it
+      const preInstructions = [];
       try {
-        tokenContract = await tronWeb.contract().at(tokenAddress);
-        console.log('✅ Token contract loaded successfully');
-      } catch (err) {
-        console.error('❌ Failed to load token contract:', err);
-        toast.error('Failed to load token contract. Please check the token address.');
-        setFunding(false);
-        return;
-      }
-
-      // Check user's token balance
-      let userBalance;
-      try {
-        userBalance = await tokenContract.balanceOf(walletAddress).call();
-        const userBalanceNumber = parseInt(userBalance.toString());
-
-        console.log('💰 User balance:', {
-          raw: userBalance.toString(),
-          formatted: userBalanceNumber / Math.pow(10, decimals),
-          required: fundAmount
-        });
-
-        if (userBalanceNumber < amountInSun) {
-          toast.error(`Insufficient ${selectedToken} balance. You have ${(userBalanceNumber / Math.pow(10, decimals)).toFixed(2)} ${selectedToken}`);
-          setFunding(false);
-          return;
-        }
-      } catch (err) {
-        console.error('❌ Failed to check balance:', err);
-        toast.error('Failed to check your token balance');
-        setFunding(false);
-        return;
-      }
-
-      // Approve token spending
-      console.log('✅ Approving token spending...');
-      try {
-        const approveTx = await tokenContract.approve(
-          contractAddress,
-          amountInSun
-        ).send({
-          feeLimit: 100000000, // 100 TRX
-          callValue: 0,
-          shouldPollResponse: true
-        });
-
-        console.log('✅ Approval transaction:', approveTx);
-        toast.success('Token approval successful! Please confirm the funding transaction...');
-      } catch (err) {
-        console.error('❌ Approval failed:', err);
-        if (err.message && err.message.includes('Confirmation declined')) {
-          toast.error('Transaction was cancelled');
-        } else {
-          toast.error('Token approval failed: ' + (err.message || 'Unknown error'));
-        }
-        setFunding(false);
-        return;
-      }
-
-      // Wait a moment for the approval to be confirmed
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Get main contract instance
-      let mainContract;
-      try {
-        mainContract = await tronWeb.contract().at(contractAddress);
-        console.log('✅ Main contract loaded successfully');
-      } catch (err) {
-        console.error('❌ Failed to load main contract:', err);
-        toast.error('Failed to load payment contract. Please check the contract address.');
-        setFunding(false);
-        return;
-      }
-
-      // Call fundWallet function
-      console.log('💸 Calling fundWallet with params:', {
-        tokenAddress,
-        amountInSun
-      });
-
-      let fundTx;
-      try {
-        fundTx = await mainContract.fundWallet(
-          tokenAddress,
-          amountInSun
-        ).send({
-          feeLimit: 100000000, // 100 TRX
-          callValue: 0,
-          // shouldPollResponse: true
-        });
-
-        console.log('📋 Fund transaction hash:', fundTx);
-
-
-
-
-      } catch (err) {
-        console.error('❌ fundWallet call failed:', err);
-        if (err.message && err.message.includes('Confirmation declined')) {
-          toast.error('Transaction was cancelled');
-        } else if (err.message && err.message.includes('Invalid contract address')) {
-          toast.error('Invalid contract address provided. Please check your environment variables.');
-        } else {
-          toast.error('Funding transaction failed: ' + (err.message || 'Unknown error'));
-        }
-        setFunding(false);
-        return;
-      }
-
-      // let txHash = null;
-
-      // if (typeof fundTx === 'string') {
-      //   txHash = fundTx;
-      // } else if (fundTx?.txid) {
-      //   txHash = fundTx.txid;
-      // } else if (fundTx?.transaction?.txID) {
-      //   txHash = fundTx.transaction.txID;
-      // } else {
-      //   console.error('❌ Invalid fundTx returned:', fundTx);
-      //   toast.error('Failed to get transaction hash from TronLink');
-      //   setFunding(false);
-      //   return;
-      // }
-
-      // console.log('✅ Normalized txHash:', txHash);
-
-      let txHash = null;
-
-      // 1️⃣ Direct string
-      if (typeof fundTx === 'string') {
-        txHash = fundTx;
-      }
-
-      // 2️⃣ Object txid
-      else if (fundTx && typeof fundTx === 'object') {
-        txHash =
-          fundTx.txid ||
-          fundTx.transaction?.txID ||
-          fundTx.receipt?.txID ||
-          fundTx.receipt?.transaction_id;
-      }
-
-      // 3️⃣ FINAL fallback — read last transaction from wallet
-      if (!txHash) {
-        console.warn('⚠️ fundTx empty — fetching latest transaction from chain');
-
-        const txs = await tronWeb.trx.getTransactionsRelated(
-          walletAddress,
-          'from',
-          1,
-          0
+        await getAccount(connection, treasuryTokenAccount);
+      } catch {
+        preInstructions.push(
+          createAssociatedTokenAccountInstruction(
+            wallet.publicKey,
+            treasuryTokenAccount,
+            treasuryPda,
+            mint
+          )
         );
-
-        if (txs && txs.length > 0) {
-          txHash = txs[0].txID;
-        }
       }
 
-      if (!txHash) {
-        toast.error('Transaction completed but hash could not be resolved');
-        setFunding(false);
-        return;
-      }
+      console.log('🔄 Calling deposit function with:', {
+        amount: fundAmount,
+        mint: mint.toBase58(),
+        user: wallet.publicKey.toBase58(),
+        treasury: treasuryPda.toBase58()
+      });
 
-      console.log('✅ Final txHash resolved:', txHash);
+      // Call the deposit function
+      const tx = await program.methods
+        .deposit(amount)
+        .accounts({
+          treasury: treasuryPda,
+          user: wallet.publicKey,
+          userTokenAccount,
+          treasuryTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .preInstructions(preInstructions)
+        .rpc();
 
+      console.log('✅ Deposit transaction:', tx);
+      toast.success('Processing deposit...');
 
-      // Get transaction info to extract events
-      let txInfo;
-      try {
-        // Wait a bit for transaction to be confirmed
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        txInfo = await tronWeb.trx.getTransactionInfo(txHash);
-        console.log('📋 Transaction info:', txInfo);
-      } catch (err) {
-        console.error('❌ Failed to get transaction info:', err);
-        // Continue anyway, we have the transaction hash
-        txInfo = { blockNumber: 0, log: [] };
-      }
+      // Wait for confirmation
+      await connection.confirmTransaction(tx, 'confirmed');
 
-      // Parse WalletFunded event from logs
-      let walletFundedEvent = null;
+      // Get transaction details
+      const txDetails = await connection.getTransaction(tx, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0
+      });
 
-      if (txInfo.log && txInfo.log.length > 0) {
-        // Look for WalletFunded event
-        // Event signature: WalletFunded(address indexed user, address indexed token, uint256 amount)
-        try {
-          const walletFundedSignature = tronWeb.sha3('WalletFunded(address,address,uint256)').slice(0, 10);
+      console.log('📋 Transaction details:', txDetails);
 
-          for (const log of txInfo.log) {
-            if (log.topics && log.topics[0] === walletFundedSignature) {
-              walletFundedEvent = {
-                user: tronWeb.address.fromHex('41' + log.topics[1].slice(24)),
-                token: tronWeb.address.fromHex('41' + log.topics[2].slice(24)),
-                amount: parseInt(log.data, 16).toString()
-              };
-              break;
-            }
-          }
-        } catch (err) {
-          console.warn('⚠️ Failed to parse event logs:', err);
-        }
-      }
+      // Prepare funding data for backend
+      const fundingData = {
+        user: wallet.publicKey.toBase58(),
+        token: mint.toBase58(),
+        amount: amount.toString(),
+        transactionHash: tx,
+        blockNumber: txDetails?.slot?.toString() || '0'
+      };
 
-      console.log('💰 WalletFunded event found:', !!walletFundedEvent);
-
-      // Prepare funding data - use event if found, otherwise use fallback
-      let fundingData = null;
-
-      if (walletFundedEvent) {
-        fundingData = {
-          user: walletFundedEvent.user,
-          token: walletFundedEvent.token,
-          amount: walletFundedEvent.amount,
-          transactionHash: txHash,
-          blockNumber: txInfo.blockNumber ? txInfo.blockNumber.toString() : '0'
-        };
-        console.log('📤 Using event data:', fundingData);
-      } else {
-        // Fallback: Use transaction data we know
-        console.warn('⚠️ WalletFunded event not found, using fallback');
-
-        fundingData = {
-          user: walletAddress,
-          token: tokenAddress,
-          amount: amountInSun.toString(),
-          transactionHash: txHash,
-          blockNumber: txInfo.blockNumber ? txInfo.blockNumber.toString() : '0'
-        };
-        console.log('📤 Using fallback data:', fundingData);
-      }
+      console.log('📤 Sending to backend:', fundingData);
 
       // Send to backend
-      if (fundingData) {
-        const authToken = localStorage.getItem('userToken');
-        console.log('🔑 Auth token exists:', !!authToken);
-        console.log('🚀 About to call API:', API_ENDPOINTS.WALLET_FUNDINGS_CREATE);
-        console.log('📦 Request payload:', JSON.stringify(fundingData, null, 2));
+      try {
+        const response = await axios.post(
+          API_ENDPOINTS.WALLET_FUNDINGS_CREATE,
+          fundingData,
+          { headers: authHeaders(), timeout: 10000 }
+        );
 
-        if (!txHash || typeof txHash !== 'string') {
-          toast.error('Invalid transaction hash. Funding aborted.');
-          return;
-        }
-
-        try {
-          const response = await axios.post(
-            API_ENDPOINTS.WALLET_FUNDINGS_CREATE,
-            fundingData,
-            {
-              headers: authHeaders(),
-              timeout: 10000 // 10 second timeout
-            }
-          );
-
-          console.log('✅ Wallet funding recorded in backend:', response.data);
-          toast.success('Wallet funding recorded successfully!');
-        } catch (backendError) {
-          console.error('❌ FAILED to record funding in backend');
-          console.error('Error object:', backendError);
-          console.error('Error response:', backendError.response?.data);
-          console.error('Error status:', backendError.response?.status);
-
-          const errorMsg = backendError.response?.data?.error ||
-            backendError.response?.data?.message ||
-            backendError.message ||
-            'Unknown error';
-          toast.error(`Failed to update balance: ${errorMsg}`);
-        }
-      } else {
-        console.error('❌ No funding data available - cannot call API');
-        toast.error('Could not extract funding data. Please refresh the page.');
+        console.log('✅ Backend response:', response.data);
+        toast.success(`Successfully funded ${fundAmount} ${selectedToken}!`);
+      } catch (backendError) {
+        console.error('❌ Backend error:', backendError);
+        const errorMsg = backendError.response?.data?.error ||
+          backendError.response?.data?.message ||
+          backendError.message ||
+          'Unknown error';
+        toast.error(`Deposit successful but backend update failed: ${errorMsg}`);
       }
 
-      toast.success(`Successfully funded ${fundAmount} ${selectedToken} to your wallet!`);
       setFundAmount('');
-
-      // Refresh balances immediately
       await fetchBalances();
       await fetchFundingHistory();
 
     } catch (error) {
-      console.error('Fund wallet error:', error);
+      console.error('❌ Fund wallet error:', error);
 
       let errorMessage = 'Failed to fund wallet';
-
       if (error.message) {
-        if (error.message.includes('Confirmation declined by user')) {
+        if (error.message.includes('User rejected')) {
           errorMessage = 'Transaction was cancelled';
-        } else if (error.message.includes('bandwidth')) {
-          errorMessage = 'Insufficient bandwidth. Please try again later.';
-        } else if (error.message.includes('energy')) {
-          errorMessage = 'Insufficient energy. Please try again later.';
+        } else if (error.message.includes('insufficient')) {
+          errorMessage = 'Insufficient balance or SOL for gas fees';
         } else {
           errorMessage = error.message;
         }
       }
-
       toast.error(errorMessage);
     } finally {
       setFunding(false);
@@ -493,8 +251,8 @@ const Wallet = () => {
     return (
       <div className="border border-gray-100 rounded-16 px-24 py-40 text-center">
         <i className="ph ph-wallet text-6xl text-gray-400 mb-16" />
-        <p className="text-gray-600 mb-24">Please connect your TronLink wallet to view your wallet balance</p>
-        <p className="text-sm text-gray-500">Click the "Connect Wallet" button in the header to get started</p>
+        <p className="text-gray-600 mb-24">Please connect your Phantom or Solflare wallet</p>
+        <p className="text-sm text-gray-500">Click the "Select Wallet" button in the header to get started</p>
       </div>
     );
   }
@@ -511,7 +269,7 @@ const Wallet = () => {
               <h5 className="text-xl mb-0">Platform Wallet</h5>
               <div className="bg-success-50 text-success-600 px-12 py-6 rounded-8 text-sm fw-medium">
                 <i className="ph ph-check-circle me-4" />
-                Connected (Nile Testnet)
+                Connected (Solana Devnet)
               </div>
             </div>
 
@@ -534,17 +292,17 @@ const Wallet = () => {
               </div>
             </div>
 
-            {/* Environment Info */}
+            {/* Program Info */}
             <div className="bg-info-50 rounded-12 px-16 py-12 mb-24">
               <p className="text-info-600 text-xs mb-4">
                 <i className="ph ph-info me-4" />
-                Contract Addresses
+                Contract Information
               </p>
               <p className="text-xs text-gray-700 mb-2 font-monospace">
-                <strong>Contract:</strong> {REACT_APP_CONTRACT_ADDRESS}
+                <strong>Program:</strong> {PROGRAM_ID.toBase58()}
               </p>
               <p className="text-xs text-gray-700 mb-0 font-monospace">
-                <strong>USDT:</strong> {REACT_APP_USDT_ADDRESS}
+                <strong>Network:</strong> Solana Devnet
               </p>
             </div>
 
@@ -555,13 +313,13 @@ const Wallet = () => {
                   className={`btn ${selectedToken === 'USDT' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
                   onClick={() => setSelectedToken('USDT')}
                 >
-                  USDT (TRC20)
+                  USDT (SPL)
                 </button>
                 <button
                   className={`btn ${selectedToken === 'USDC' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
                   onClick={() => setSelectedToken('USDC')}
                 >
-                  USDC (TRC20)
+                  USDC (SPL)
                 </button>
               </div>
             </div>
@@ -571,7 +329,7 @@ const Wallet = () => {
               <div className="mb-16">
                 <p className="text-gray-600 text-sm mb-8">Available Balance</p>
                 <h3 className="text-2xl fw-bold text-main-two-600">
-                  {currentBalance.available.toString()} {selectedToken}
+                  {currentBalance.available.toFixed(2)} {selectedToken}
                 </h3>
               </div>
 
@@ -579,11 +337,11 @@ const Wallet = () => {
                 <div className="row">
                   <div className="col-6">
                     <p className="text-gray-600 text-sm mb-4">Total Funded</p>
-                    <p className="text-lg fw-semibold">{currentBalance.totalFunded.toString()}</p>
+                    <p className="text-lg fw-semibold">{currentBalance.totalFunded.toFixed(2)}</p>
                   </div>
                   <div className="col-6">
                     <p className="text-gray-600 text-sm mb-4">Total Spent</p>
-                    <p className="text-lg fw-semibold">{currentBalance.totalSpent.toString()}</p>
+                    <p className="text-lg fw-semibold">{currentBalance.totalSpent.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
@@ -660,12 +418,12 @@ const Wallet = () => {
                     </div>
                     <div className="border-top pt-12">
                       <a
-                        href={`https://nile.tronscan.org/#/transaction/${funding.transactionHash}`}
+                        href={`https://explorer.solana.com/tx/${funding.transactionHash}?cluster=devnet`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-main-two-600 text-sm flex-align gap-4 hover-text-decoration-underline"
                       >
-                        View on TronScan (Nile)
+                        View on Solana Explorer
                         <i className="ph ph-arrow-square-out" />
                       </a>
                     </div>
@@ -684,10 +442,10 @@ const Wallet = () => {
             <div className="flex-align gap-12">
               <i className="ph ph-warning text-2xl text-warning-600" />
               <div>
-                <h6 className="text-sm fw-semibold mb-4 text-warning-900">TRON Nile Testnet</h6>
+                <h6 className="text-sm fw-semibold mb-4 text-warning-900">Solana Devnet</h6>
                 <p className="text-xs text-warning-700 mb-0">
-                  You are connected to TRON Nile Testnet. Get free testnet TRX and USDT from faucets.
-                  Make sure you have enough TRX for transaction fees (energy/bandwidth).
+                  You are connected to Solana Devnet. Get free devnet SOL and test tokens from faucets.
+                  Make sure you have enough SOL for transaction fees.
                 </p>
               </div>
             </div>

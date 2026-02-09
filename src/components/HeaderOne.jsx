@@ -1,18 +1,64 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import query from "jquery";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import axios from 'axios';
 import { API_ENDPOINTS } from '../config/api';
-import toast from 'react-hot-toast'
-
+import toast from 'react-hot-toast';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletReadyState } from '@solana/wallet-adapter-base';
 
 const HeaderOne = () => {
   const [scroll, setScroll] = useState(false);
 
-  // TronLink wallet state
-  const [tronWeb, setTronWeb] = useState(null);
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  // Solana Wallet - Direct Phantom connection
+  const { publicKey, connected, disconnect, wallets, select, connect } = useWallet();
+  const walletAddress = publicKey?.toBase58();
+  const isConnected = connected;
+
+  // Function to connect directly to Phantom
+  const connectPhantomWallet = useCallback(async () => {
+    try {
+      // Find Phantom wallet from available wallets
+      const phantomWallet = wallets.find(
+        wallet => wallet.adapter.name === 'Phantom'
+      );
+
+      if (!phantomWallet) {
+        toast.error('Phantom wallet not found. Please install Phantom extension.');
+        // Redirect to Phantom installation
+        window.open('https://phantom.app/', '_blank');
+        return;
+      }
+
+      // Check if Phantom is installed
+      if (phantomWallet.readyState === WalletReadyState.NotDetected) {
+        toast.error('Phantom wallet is not installed. Redirecting to download...');
+        window.open('https://phantom.app/', '_blank');
+        return;
+      }
+
+      // Select and connect to Phantom
+      select(phantomWallet.adapter.name);
+      
+      // Small delay to ensure wallet is selected
+      setTimeout(async () => {
+        try {
+          await connect();
+        } catch (err) {
+          console.error('Connection error:', err);
+          if (err.message?.includes('User rejected')) {
+            toast.error('Connection rejected by user');
+          } else {
+            // toast.error('Failed to connect wallet');
+          }
+        }
+      }, 100);
+
+    } catch (error) {
+      console.error('Error connecting to Phantom:', error);
+      toast.error('Failed to connect to Phantom wallet');
+    }
+  }, [wallets, select, connect]);
 
   useEffect(() => {
     window.onscroll = () => {
@@ -75,6 +121,7 @@ const HeaderOne = () => {
   // Mobile category dropdown
   const [mobileCategoryOpen, setMobileCategoryOpen] = useState(false);
   const mobileCategoryRef = useRef(null);
+  
   // Auth / account dropdown
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     try {
@@ -99,8 +146,6 @@ const HeaderOne = () => {
   const [cartMenuOpen, setCartMenuOpen] = useState(false);
   const [cartLoading, setCartLoading] = useState(false);
   const cartMenuRef = useRef(null);
-
-
 
   const selectPreferredToken = (token) => {
     setPreferredToken(token);
@@ -155,112 +200,6 @@ const HeaderOne = () => {
       setCartItems([]);
     } finally {
       setCartLoading(false);
-    }
-  }, []);
-
-  // TronLink Wallet Functions
-  const checkTronLink = () => {
-    if (window.tronWeb && window.tronWeb.ready) {
-      return true;
-    }
-    return false;
-  };
-
-  const connectTronLink = async () => {
-    try {
-      if (!window.tronLink) {
-        toast.error('TronLink wallet not detected. Please install TronLink extension.');
-        window.open('https://www.tronlink.org/', '_blank');
-        return;
-      }
-
-      // Request account access
-      const res = await window.tronLink.request({ method: 'tron_requestAccounts' });
-      
-      if (res.code === 200) {
-        if (window.tronWeb && window.tronWeb.ready) {
-          const address = window.tronWeb.defaultAddress.base58;
-          setTronWeb(window.tronWeb);
-          setWalletAddress(address);
-          setIsConnected(true);
-          
-          // Store in localStorage
-          localStorage.setItem('tronWalletAddress', address);
-          
-          toast.success('TronLink wallet connected successfully!');
-          
-          // Dispatch event for other components
-          window.dispatchEvent(new CustomEvent('tronWalletConnected', { 
-            detail: { address, tronWeb: window.tronWeb } 
-          }));
-        }
-      } else {
-        toast.error('Unlock your TronLink wallet to connect');
-        // toast.error('Failed to connect to TronLink wallet');
-      }
-    } catch (error) {
-      console.error('TronLink connection error:', error);
-      toast.error(error.message || 'Failed to connect wallet');
-    }
-  };
-
-  const disconnectTronLink = () => {
-    setTronWeb(null);
-    setWalletAddress(null);
-    setIsConnected(false);
-    localStorage.removeItem('tronWalletAddress');
-    toast.success('Wallet disconnected');
-    
-    // Dispatch event for other components
-    window.dispatchEvent(new Event('tronWalletDisconnected'));
-  };
-
-  // Check for existing TronLink connection on mount
-  useEffect(() => {
-    const checkExistingConnection = async () => {
-      const savedAddress = localStorage.getItem('tronWalletAddress');
-      
-      if (savedAddress && window.tronWeb && window.tronWeb.ready) {
-        const currentAddress = window.tronWeb.defaultAddress.base58;
-        
-        if (currentAddress === savedAddress) {
-          setTronWeb(window.tronWeb);
-          setWalletAddress(currentAddress);
-          setIsConnected(true);
-        } else {
-          localStorage.removeItem('tronWalletAddress');
-        }
-      }
-    };
-
-    // Wait for TronLink to inject
-    const timer = setTimeout(checkExistingConnection, 1000);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Listen for TronLink account changes
-  useEffect(() => {
-    const handleAccountsChanged = (accounts) => {
-      if (accounts && accounts.length > 0) {
-        const newAddress = window.tronWeb.defaultAddress.base58;
-        setWalletAddress(newAddress);
-        localStorage.setItem('tronWalletAddress', newAddress);
-        toast.info('Wallet account changed');
-      } else {
-        disconnectTronLink();
-      }
-    };
-
-    if (window.tronLink) {
-      window.addEventListener('message', (e) => {
-        if (e.data.message && e.data.message.action === 'accountsChanged') {
-          handleAccountsChanged(e.data.message.data);
-        }
-        if (e.data.message && e.data.message.action === 'disconnect') {
-          disconnectTronLink();
-        }
-      });
     }
   }, []);
 
@@ -449,6 +388,17 @@ const HeaderOne = () => {
     if (!address) return '';
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
+
+  // Notify when wallet connects/disconnects
+  useEffect(() => {
+    if (isConnected && walletAddress) {
+      toast.success('Phantom wallet connected successfully!');
+      // Dispatch event for other components
+      window.dispatchEvent(new CustomEvent('solanaWalletConnected', { 
+        detail: { address: walletAddress } 
+      }));
+    }
+  }, [isConnected, walletAddress]);
 
   return (
     <>
@@ -927,28 +877,30 @@ const HeaderOne = () => {
                     )}
                   </div>
 
-                  {/* TronLink Wallet Button */}
-                  {isConnected ? (
-                    <button
-                      type='button'
-                      onClick={disconnectTronLink}
-                      className='bg-success-600 text-white py-8 px-16 rounded-pill d-inline-flex align-items-center gap-8'
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <i className='ph ph-wallet' />
-                      <span className='text-md fw-medium'>{formatAddress(walletAddress)}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type='button'
-                      onClick={connectTronLink}
-                      className='bg-warning-600 text-white py-8 px-16 rounded-pill d-inline-flex align-items-center gap-8'
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <i className='ph ph-wallet' />
-                      <span className='text-md fw-medium'>Connect Wallet</span>
-                    </button>
-                  )}
+                  {/* Phantom Wallet Button - Desktop - DIRECT CONNECTION */}
+                  <div style={{ position: 'relative' }}>
+                    {isConnected ? (
+                      <button
+                        type='button'
+                        onClick={() => disconnect()}
+                        className='bg-success-600 text-white py-8 px-16 rounded-pill d-inline-flex align-items-center gap-8'
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <i className='ph ph-wallet' />
+                        <span className='text-md fw-medium'>{formatAddress(walletAddress)}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type='button'
+                        onClick={connectPhantomWallet}
+                        className='bg-warning-600 text-white py-8 px-16 rounded-pill d-inline-flex align-items-center gap-8'
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <i className='ph ph-wallet' />
+                        <span className='text-md fw-medium'>Connect Phantom</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1097,27 +1049,29 @@ const HeaderOne = () => {
                   )}
                 </div>
 
-                {/* TronLink Wallet Button - Mobile */}
-                {isConnected ? (
-                  <button
-                    type='button'
-                    onClick={disconnectTronLink}
-                    className='bg-success-600 text-white py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2'
-                    style={{ fontSize: '12px', minHeight: '40px' }}
-                  >
-                    <i className='ph ph-wallet' style={{ fontSize: '16px' }} />
-                    <span>{formatAddress(walletAddress)}</span>
-                  </button>
-                ) : (
-                  <button
-                    type='button'
-                    onClick={connectTronLink}
-                    className='bg-warning-600 text-white py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2'
-                    style={{ fontSize: '12px', minHeight: '40px' }}
-                  >
-                    <i className='ph ph-wallet' style={{ fontSize: '16px' }} />
-                  </button>
-                )}
+                {/* Phantom Wallet Button - Mobile - DIRECT CONNECTION */}
+                <div style={{ position: 'relative' }}>
+                  {isConnected ? (
+                    <button
+                      type='button'
+                      onClick={() => disconnect()}
+                      className='bg-success-600 text-white py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2'
+                      style={{ fontSize: '12px', minHeight: '40px' }}
+                    >
+                      <i className='ph ph-wallet' style={{ fontSize: '16px' }} />
+                      <span>{formatAddress(walletAddress)}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type='button'
+                      onClick={connectPhantomWallet}
+                      className='bg-warning-600 text-white py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2'
+                      style={{ fontSize: '12px', minHeight: '40px' }}
+                    >
+                      <i className='ph ph-wallet' style={{ fontSize: '16px' }} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
