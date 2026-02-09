@@ -123,7 +123,7 @@ const ProductDetailsOne = () => {
 
     try {
       const response = await axios.post(
-        `http://localhost:5000/api/products/wishlist/add/${product.id}`,
+        `https://solana-backend-hazel.vercel.app/api/products/wishlist/add/${product.id}`,
         {}, // Empty body if backend expects product ID only from URL
         {
           headers: {

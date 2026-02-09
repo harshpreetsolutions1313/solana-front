@@ -47,7 +47,7 @@ const Account = () => {
     setError(null);
     setMessage(null);
     try {
-      const response = await fetch('http://localhost:5000/api/auth/signin', {
+      const response = await fetch('https://solana-backend-hazel.vercel.app/api/auth/signin', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -85,7 +85,7 @@ const Account = () => {
     setError(null);
     setMessage(null);
     try {
-      const response = await fetch('http://localhost:5000/api/auth/signup', {
+      const response = await fetch('https://solana-backend-hazel.vercel.app/api/auth/signup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

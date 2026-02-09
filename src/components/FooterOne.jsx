@@ -14,7 +14,7 @@ const FooterOne = () => {
     const fetchCategories = async () => {
         try {
             const res = await axios.get(
-                'http://localhost:5000/api/categories/details'
+                'https://solana-backend-hazel.vercel.app/api/categories/details'
             )
 
             if (!mounted) return

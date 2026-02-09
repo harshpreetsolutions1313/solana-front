@@ -17,7 +17,7 @@ const PurchasedProductsSection = () => {
 
   const fetchOrderStats = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/orders/user/stats', {
+      const response = await fetch('https://solana-backend-hazel.vercel.app/api/orders/user/stats', {
         headers: getAuthHeaders(),
       });
 
@@ -42,7 +42,7 @@ const PurchasedProductsSection = () => {
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/users/purchased-products', {
+      const response = await fetch('https://solana-backend-hazel.vercel.app/api/users/purchased-products', {
         headers: getAuthHeaders(),
       });
 

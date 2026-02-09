@@ -199,7 +199,7 @@ const Checkout = () => {
 
   const fetchShippingInfo = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/shipping/me', {
+      const res = await axios.get('https://solana-backend-hazel.vercel.app/api/shipping/me', {
         headers: authHeaders(),
       });
 
@@ -261,13 +261,13 @@ const Checkout = () => {
 
   const saveOrUpdateShipping = async () => {
     try {
-      await axios.put('http://localhost:5000/api/shipping', shippingData, {
+      await axios.put('https://solana-backend-hazel.vercel.app/api/shipping', shippingData, {
         headers: authHeaders(),
       });
       return true;
     } catch (err) {
       try {
-        await axios.post('http://localhost:5000/api/shipping', shippingData, {
+        await axios.post('https://solana-backend-hazel.vercel.app/api/shipping', shippingData, {
           headers: authHeaders(),
         });
         return true;
