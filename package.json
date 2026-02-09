@@ -23,6 +23,7 @@
     "animate.css": "^4.1.1",
     "axios": "^1.13.2",
     "bootstrap": "^5.3.3",
+    "buffer": "^6.0.3",
     "cors": "^2.8.5",
     "ethers": "^6.16.0",
     "isotope-layout": "^3.0.6",

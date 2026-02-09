@@ -18,7 +18,8 @@ const PROGRAM_ID = new PublicKey('558HkyiK5Ki8gh7aQBzBmRvimrrR9ZuRJgvzni4uZGRg')
 
 // Token Mints (DEVNET)
 const USDT_MINT = new PublicKey('DAwBSXe6w9g37wdE2tCrFbho3QHKZi4PjuBytQCULap2');
-const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+// const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+const USDC_MINT = new PublicKey('Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr');
 
 const Wallet = () => {
   const { connection } = useConnection();
@@ -329,7 +330,7 @@ const Wallet = () => {
               <div className="mb-16">
                 <p className="text-gray-600 text-sm mb-8">Available Balance</p>
                 <h3 className="text-2xl fw-bold text-main-two-600">
-                  {currentBalance.available.toFixed(2)} {selectedToken}
+                  {currentBalance.available.toString()} {selectedToken}
                 </h3>
               </div>
 
@@ -337,11 +338,11 @@ const Wallet = () => {
                 <div className="row">
                   <div className="col-6">
                     <p className="text-gray-600 text-sm mb-4">Total Funded</p>
-                    <p className="text-lg fw-semibold">{currentBalance.totalFunded.toFixed(2)}</p>
+                    <p className="text-lg fw-semibold">{currentBalance.totalFunded.toString()}</p>
                   </div>
                   <div className="col-6">
                     <p className="text-gray-600 text-sm mb-4">Total Spent</p>
-                    <p className="text-lg fw-semibold">{currentBalance.totalSpent.toFixed(2)}</p>
+                    <p className="text-lg fw-semibold">{currentBalance.totalSpent.toString()}</p>
                   </div>
                 </div>
               </div>

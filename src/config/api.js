@@ -1,7 +1,7 @@
 // API Configuration
 // Centralized API base URL configuration
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL ||
-  'https://tron-backend.vercel.app';
+  'http://localhost:5000';
 
 export const API_ENDPOINTS = {
   BASE_URL: API_BASE_URL,

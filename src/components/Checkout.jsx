@@ -182,7 +182,7 @@ const Checkout = () => {
 
   const fetchShippingInfo = async () => {
     try {
-      const res = await axios.get('https://tron-backend.vercel.app/api/shipping/me', {
+      const res = await axios.get('http://localhost:5000/api/shipping/me', {
         headers: authHeaders(),
       });
 
@@ -246,14 +246,14 @@ const Checkout = () => {
   const saveOrUpdateShipping = async () => {
     try {
       // Try to update first
-      await axios.put('https://tron-backend.vercel.app/api/shipping', shippingData, {
+      await axios.put('http://localhost:5000/api/shipping', shippingData, {
         headers: authHeaders(),
       });
       return true;
     } catch (err) {
       // If update fails, try to create
       try {
-        await axios.post('https://tron-backend.vercel.app/api/shipping', shippingData, {
+        await axios.post('http://localhost:5000/api/shipping', shippingData, {
           headers: authHeaders(),
         });
         return true;

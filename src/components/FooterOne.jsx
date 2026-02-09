@@ -14,7 +14,7 @@ const FooterOne = () => {
     const fetchCategories = async () => {
         try {
             const res = await axios.get(
-                'https://tron-backend.vercel.app/api/categories/details'
+                'http://localhost:5000/api/categories/details'
             )
 
             if (!mounted) return

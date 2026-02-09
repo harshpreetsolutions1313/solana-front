@@ -12,7 +12,7 @@ const FooterFour = () => {
         const fetchCategories = async () => {
             try {
                 const res = await axios.get(
-                    'https://tron-backend.vercel.app/api/categories/details'
+                    'http://localhost:5000/api/categories/details'
                 )
                 setCategories(res.data.slice(0, 6)) // only first 6
             } catch (error) {
