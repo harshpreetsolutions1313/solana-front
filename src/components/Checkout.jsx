@@ -3,32 +3,47 @@ import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS } from '../config/api';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { 
+  PublicKey, 
+  Transaction,
+} from '@solana/web3.js';
+import { 
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
+  getAccount
+} from '@solana/spl-token';
 
-const { REACT_APP_CONTRACT_ADDRESS, REACT_APP_USDT_ADDRESS, REACT_APP_USDC_ADDRESS } = process.env;
+const { 
+  REACT_APP_PROGRAM_ID,
+  REACT_APP_USDT_MINT, 
+  REACT_APP_USDC_MINT,
+  REACT_APP_TREASURY_PUBKEY
+} = process.env;
 
-const getTokenSymbolByAddress = (address) => {
-  if (!address) return null;
-
-  // TRON addresses are case-sensitive, so compare directly
-  if (address === REACT_APP_USDT_ADDRESS) return 'USDT';
-  if (address === REACT_APP_USDC_ADDRESS) return 'USDC';
-
+const getTokenSymbolByMint = (mint) => {
+  if (!mint) return null;
+  if (mint === REACT_APP_USDT_MINT) return 'USDT';
+  if (mint === REACT_APP_USDC_MINT) return 'USDC';
   return null;
 };
 
 const Checkout = () => {
   const navigate = useNavigate();
+  const { connection } = useConnection();
+  const { publicKey, signTransaction, sendTransaction, connected } = useWallet();
+  
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [placingOrder, setPlacingOrder] = useState(false);
-  const [selectedToken, setSelectedToken] = useState(REACT_APP_USDT_ADDRESS);
+  const [selectedTokenMint, setSelectedTokenMint] = useState(REACT_APP_USDC_MINT);
   const [paymentMethod, setPaymentMethod] = useState('direct'); // 'direct' or 'wallet'
   const [walletBalance, setWalletBalance] = useState({ USDT: 0, USDC: 0 });
 
-  // TronLink wallet state
-  const [tronWeb, setTronWeb] = useState(null);
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const walletAddress = publicKey?.toBase58();
+  const isConnected = connected && publicKey;
 
   // Shipping form state
   const [shippingData, setShippingData] = useState({
@@ -49,82 +64,84 @@ const Checkout = () => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Check for TronLink wallet connection
+  // Listen for wallet connection events
   useEffect(() => {
-    const checkTronLink = () => {
-      const savedAddress = localStorage.getItem('tronWalletAddress');
-      
-      if (savedAddress && window.tronWeb && window.tronWeb.ready) {
-        const currentAddress = window.tronWeb.defaultAddress.base58;
-        
-        if (currentAddress === savedAddress) {
-          setTronWeb(window.tronWeb);
-          setWalletAddress(currentAddress);
-          setIsConnected(true);
-        }
-      }
-    };
+    if (isConnected && walletAddress) {
+      console.log('Wallet connected:', walletAddress);
+    }
+  }, [isConnected, walletAddress]);
 
-    // Wait for TronLink to inject
-    const timer = setTimeout(checkTronLink, 1000);
-    
-    // Listen for wallet connection events
-    const handleWalletConnected = (event) => {
-      const { address, tronWeb } = event.detail;
-      setWalletAddress(address);
-      setTronWeb(tronWeb);
-      setIsConnected(true);
-    };
-
-    const handleWalletDisconnected = () => {
-      setWalletAddress(null);
-      setTronWeb(null);
-      setIsConnected(false);
-    };
-
-    window.addEventListener('tronWalletConnected', handleWalletConnected);
-    window.addEventListener('tronWalletDisconnected', handleWalletDisconnected);
-
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('tronWalletConnected', handleWalletConnected);
-      window.removeEventListener('tronWalletDisconnected', handleWalletDisconnected);
-    };
-  }, []);
-
-  // Fetch wallet balance
+  // Fetch wallet balance for SPL tokens
   const fetchWalletBalance = async () => {
     if (!walletAddress || !isConnected) return;
 
     try {
-      const tokenSymbol = getTokenSymbolByAddress(selectedToken);
+      const tokenSymbol = getTokenSymbolByMint(selectedTokenMint);
       if (!tokenSymbol) {
         toast.error('Unsupported token selected');
         return;
       }
 
-      const response = await axios.get(
-        API_ENDPOINTS.WALLET_BALANCE(walletAddress, tokenSymbol),
-        { headers: authHeaders() }
+      // Get on-chain balance
+      const tokenMintPubkey = new PublicKey(selectedTokenMint);
+      const walletPubkey = new PublicKey(walletAddress);
+      
+      const associatedTokenAddress = await getAssociatedTokenAddress(
+        tokenMintPubkey,
+        walletPubkey
       );
 
-      if (response.data.success) {
-        const balance = Number(response.data.data.availableBalance || 0);
+      try {
+        const tokenAccount = await getAccount(connection, associatedTokenAddress);
+        // SPL tokens typically use 9 decimals, but check the mint for accuracy
+        const balance = Number(tokenAccount.amount) / Math.pow(10, 6);
+        
         setWalletBalance(prev => ({
           ...prev,
           [tokenSymbol]: balance
         }));
+
+        console.log(`${tokenSymbol} balance:`, balance);
+      } catch (err) {
+        // Token account doesn't exist
+        console.log('Token account not found for', tokenSymbol);
+        setWalletBalance(prev => ({
+          ...prev,
+          [tokenSymbol]: 0
+        }));
       }
+
+      // Also check backend balance (for "Use Wallet" payment method)
+      if (paymentMethod === 'wallet') {
+        try {
+          const response = await axios.get(
+            API_ENDPOINTS.WALLET_BALANCE(walletAddress, tokenSymbol),
+            { headers: authHeaders() }
+          );
+
+          if (response.data.success) {
+            const backendBalance = Number(response.data.data.availableBalance || 0);
+            setWalletBalance(prev => ({
+              ...prev,
+              [`${tokenSymbol}_BACKEND`]: backendBalance
+            }));
+            console.log(`${tokenSymbol} backend balance:`, backendBalance);
+          }
+        } catch (error) {
+          console.log('Backend balance check failed:', error.message);
+        }
+      }
+
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
     }
   };
 
   useEffect(() => {
-    if (isConnected && walletAddress && paymentMethod === 'wallet') {
+    if (isConnected && walletAddress) {
       fetchWalletBalance();
     }
-  }, [walletAddress, isConnected, selectedToken, paymentMethod]);
+  }, [walletAddress, isConnected, selectedTokenMint, paymentMethod]);
 
   const normalizeCartItems = (raw = []) => {
     return raw
@@ -208,7 +225,7 @@ const Checkout = () => {
   useEffect(() => {
     const savedToken = localStorage.getItem('selectedPaymentToken');
     if (savedToken) {
-      setSelectedToken(savedToken);
+      setSelectedTokenMint(savedToken);
     }
 
     fetchCart();
@@ -233,7 +250,6 @@ const Checkout = () => {
       }
     }
 
-    // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(shippingData.email)) {
       toast.error('Please enter a valid email address');
@@ -245,13 +261,11 @@ const Checkout = () => {
 
   const saveOrUpdateShipping = async () => {
     try {
-      // Try to update first
       await axios.put('http://localhost:5000/api/shipping', shippingData, {
         headers: authHeaders(),
       });
       return true;
     } catch (err) {
-      // If update fails, try to create
       try {
         await axios.post('http://localhost:5000/api/shipping', shippingData, {
           headers: authHeaders(),
@@ -277,10 +291,10 @@ const Checkout = () => {
     }
   };
 
-  // Handle wallet payment
+  // Handle wallet payment (using backend-tracked balance)
   const handleWalletPayment = async () => {
     if (!isConnected || !walletAddress) {
-      toast.error('Please connect your TronLink wallet');
+      toast.error('Please connect your Phantom wallet');
       return;
     }
 
@@ -293,35 +307,34 @@ const Checkout = () => {
       return;
     }
 
-    const tokenSymbol = getTokenSymbolByAddress(selectedToken);
+    const tokenSymbol = getTokenSymbolByMint(selectedTokenMint);
     if (!tokenSymbol) {
       toast.error('Unsupported token selected');
       return;
     }
+    
     const totalAmount = subtotal;
+    const backendBalance = walletBalance[`${tokenSymbol}_BACKEND`] || 0;
 
-    if (walletBalance[tokenSymbol] < totalAmount) {
-      toast.error(`Insufficient wallet balance. Available: ${walletBalance[tokenSymbol].toFixed(2)} ${tokenSymbol}, Required: ${totalAmount.toFixed(2)} ${tokenSymbol}`);
+    if (backendBalance < totalAmount) {
+      toast.error(`Insufficient wallet balance. Available: ${backendBalance.toFixed(2)} ${tokenSymbol}, Required: ${totalAmount.toFixed(2)} ${tokenSymbol}`);
       return;
     }
 
     setPlacingOrder(true);
 
     try {
-      // Save shipping information first
       const shippingSaved = await saveOrUpdateShipping();
       if (!shippingSaved) {
         setPlacingOrder(false);
         return;
       }
 
-      // Prepare order items
       const orderItems = items.map((item) => ({
         id: item.id,
         quantity: item.quantity
       }));
 
-      // Process wallet payment via backend
       const response = await axios.post(
         API_ENDPOINTS.WALLET_PAY,
         {
@@ -335,15 +348,12 @@ const Checkout = () => {
       if (response.data.success) {
         toast.success('Order placed successfully using wallet balance!');
 
-        // Clear cart
         for (const item of items) {
           await handleRemoveFromCart(item.id);
         }
 
-        // Refresh wallet balance
         fetchWalletBalance();
 
-        // Redirect to orders page
         setTimeout(() => {
           navigate('/purchased-products');
         }, 2000);
@@ -361,81 +371,44 @@ const Checkout = () => {
     }
   };
 
-  // Helper function to wait for transaction confirmation
-  const waitForTransactionConfirmation = async (txHash, maxAttempts = 40) => {
-    console.log(`🔍 Waiting for transaction confirmation: ${txHash}`);
+  // Wait for transaction confirmation on Solana
+  const waitForTransactionConfirmation = async (signature, maxAttempts = 30) => {
+    console.log(`🔍 Waiting for transaction confirmation: ${signature}`);
     
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        // First check if transaction exists
-        const tx = await tronWeb.trx.getTransaction(txHash);
+        const status = await connection.getSignatureStatus(signature);
         
-        if (!tx) {
-          console.log(`⏳ Transaction not found yet... Attempt ${i + 1}/${maxAttempts}`);
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          continue;
-        }
-
-        // Then check transaction info
-        const txInfo = await tronWeb.trx.getTransactionInfo(txHash);
+        console.log(`📋 Transaction status (Attempt ${i + 1}/${maxAttempts}):`, status);
         
-        console.log(`📋 Transaction info (Attempt ${i + 1}/${maxAttempts}):`, {
-          id: txInfo.id,
-          blockNumber: txInfo.blockNumber,
-          blockTimeStamp: txInfo.blockTimeStamp,
-          receipt: txInfo.receipt ? 'present' : 'missing',
-          result: txInfo.receipt?.result
-        });
-        
-        // Check if transaction is confirmed
-        // A transaction is confirmed if it has a blockNumber
-        if (txInfo && txInfo.blockNumber) {
-          // Check if it was successful
-          if (txInfo.receipt && txInfo.receipt.result) {
-            if (txInfo.receipt.result === 'SUCCESS') {
-              console.log(`✅ Transaction confirmed successfully after ${i + 1} attempts`);
-              return txInfo;
-            } else {
-              console.error(`❌ Transaction failed with result: ${txInfo.receipt.result}`);
-              throw new Error(`Transaction failed: ${txInfo.receipt.result}`);
-            }
+        if (status?.value?.confirmationStatus === 'confirmed' || 
+            status?.value?.confirmationStatus === 'finalized') {
+          
+          if (status.value.err) {
+            console.error(`❌ Transaction failed:`, status.value.err);
+            throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
           }
           
-          // If no receipt yet but has blockNumber, transaction is pending
-          if (!txInfo.receipt && txInfo.blockNumber) {
-            console.log(`⏳ Transaction in block but no receipt yet... Attempt ${i + 1}/${maxAttempts}`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            continue;
-          }
+          console.log(`✅ Transaction confirmed successfully after ${i + 1} attempts`);
+          return status;
         }
         
         console.log(`⏳ Waiting for confirmation... Attempt ${i + 1}/${maxAttempts}`);
-        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds between checks
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
       } catch (error) {
         console.log(`⏳ Error checking transaction... Attempt ${i + 1}/${maxAttempts}:`, error.message);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
     
-    // Before throwing timeout error, do one final check
-    try {
-      const finalTxInfo = await tronWeb.trx.getTransactionInfo(txHash);
-      if (finalTxInfo && finalTxInfo.blockNumber) {
-        console.log(`✅ Transaction found in final check!`);
-        return finalTxInfo;
-      }
-    } catch (error) {
-      console.error('Final check failed:', error);
-    }
-    
-    throw new Error('Transaction confirmation timeout - Please check TronScan to verify transaction status');
+    throw new Error('Transaction confirmation timeout - Please check Solana Explorer to verify transaction status');
   };
 
-  // Handle direct payment (on-chain via TronLink)
+  // Handle direct payment (deposit to treasury)
   const handleDirectPayment = async () => {
-    if (!isConnected || !walletAddress || !tronWeb) {
-      toast.error('Please connect your TronLink wallet');
+    if (!isConnected || !walletAddress || !publicKey) {
+      toast.error('Please connect your Phantom wallet');
       return;
     }
 
@@ -450,213 +423,145 @@ const Checkout = () => {
 
     setPlacingOrder(true);
     
-    let paymentTx = null; // Declare here to access in catch block
+    let depositSignature = null;
 
     try {
-      // Save shipping information first
       const shippingSaved = await saveOrUpdateShipping();
       if (!shippingSaved) {
         setPlacingOrder(false);
         return;
       }
 
-      const isSingleItem = items.length === 1;
-      const decimals = 6; // TRON TRC20 uses 6 decimals
+      const decimals = 6; // Solana SPL tokens use 9 decimals
 
-      console.log('🔄 Starting payment process:', {
-        isSingleItem,
+      console.log('🔄 Starting Solana payment process:', {
         itemCount: items.length,
         walletAddress,
-        selectedToken,
-        contractAddress: REACT_APP_CONTRACT_ADDRESS
+        selectedTokenMint,
+        treasuryPubkey: REACT_APP_TREASURY_PUBKEY
       });
 
-      // Prepare amounts in SUN (smallest unit)
-      const amounts = items.map((item) => {
-        const amount = item.price * item.quantity;
-        return Math.floor(amount * Math.pow(10, decimals));
+      // Calculate total amount
+      const totalAmount = items.reduce((sum, item) => {
+        return sum + (item.price * item.quantity);
+      }, 0);
+
+      const amountInSmallestUnit = Math.floor(totalAmount * Math.pow(10, decimals));
+
+      console.log('💰 Payment amount:', {
+        totalUSD: totalAmount.toFixed(2),
+        amountInSmallestUnit: amountInSmallestUnit.toString()
       });
 
-      const totalAmount = amounts.reduce((a, b) => a + b, 0);
+      // Get token mint and treasury addresses
+      const tokenMintPubkey = new PublicKey(selectedTokenMint);
+      const treasuryPubkey = new PublicKey(REACT_APP_TREASURY_PUBKEY);
+      const senderPubkey = publicKey;
 
-      console.log('💰 Payment amounts:', {
-        amounts: amounts.map(a => a.toString()),
-        totalAmount: totalAmount.toString()
+      // Get associated token addresses
+      const senderTokenAddress = await getAssociatedTokenAddress(
+        tokenMintPubkey,
+        senderPubkey
+      );
+
+      const treasuryTokenAddress = await getAssociatedTokenAddress(
+        tokenMintPubkey,
+        treasuryPubkey
+      );
+
+      console.log('📍 Token addresses:', {
+        sender: senderTokenAddress.toBase58(),
+        treasury: treasuryTokenAddress.toBase58()
       });
 
-      // Get token contract
-      const tokenContract = await tronWeb.contract().at(selectedToken);
-
-      // 1️⃣ Approve token spending
-      console.log('✅ Approving token spending...');
-      const approveTx = await tokenContract.approve(
-        REACT_APP_CONTRACT_ADDRESS,
-        totalAmount
-      ).send({
-        feeLimit: 100000000, // 100 TRX
-        callValue: 0,
-        shouldPollResponse: false // Get hash immediately
-      });
-
-      console.log('✅ Approval transaction hash:', approveTx);
-      
-      // Wait for approval confirmation
-      const approvalToast = toast.loading('Waiting for approval confirmation...');
-      await waitForTransactionConfirmation(approveTx);
-      toast.dismiss(approvalToast);
-      toast.success('Token approval confirmed!');
-
-      // Get main contract
-      const mainContract = await tronWeb.contract().at(REACT_APP_CONTRACT_ADDRESS);
-
-      // 2️⃣ Call correct contract function
-      if (isSingleItem) {
-        const item = items[0];
-
-        console.log('📦 Single order payment:', {
-          productId: item.id,
-          amount: amounts[0].toString(),
-          token: selectedToken
-        });
-
-        paymentTx = await mainContract.createAndPayForOrder(
-          item.id,
-          amounts[0],
-          selectedToken
-        ).send({
-          feeLimit: 150000000, // 150 TRX
-          callValue: 0,
-          shouldPollResponse: false // Get hash immediately
-        });
-
-      } else {
-        const productIds = items.map((item) => item.id);
-
-        console.log('📦 Multiple orders payment:', {
-          productIds,
-          amounts: amounts.map(a => a.toString()),
-          token: selectedToken
-        });
-
-        paymentTx = await mainContract.createAndPayForMultipleOrders(
-          productIds,
-          amounts,
-          selectedToken
-        ).send({
-          feeLimit: 200000000, // 200 TRX
-          callValue: 0,
-          shouldPollResponse: false // Get hash immediately
-        });
-      }
-
-      console.log('📋 Payment transaction hash:', paymentTx);
-      
-      // Wait for payment transaction confirmation
-      const paymentToast = toast.loading('Waiting for payment confirmation...');
-      const txInfo = await waitForTransactionConfirmation(paymentTx);
-      toast.dismiss(paymentToast);
-      toast.success('Payment confirmed on blockchain!');
-
-      console.log('📋 Transaction info:', txInfo);
-
-      // 3️⃣ Extract orderIds from transaction
-      // For single orders: contractResult[0] contains the returned orderId
-      // For batch orders: we need to parse events
-      const paymentEvents = [];
-      
-      // STRATEGY 1: Try contractResult first (most reliable for single orders)
-      if (isSingleItem && txInfo.contractResult && txInfo.contractResult.length > 0) {
-        try {
-          console.log('🔍 Extracting single orderId from contractResult...');
-          const resultHex = txInfo.contractResult[0];
-          console.log('📝 contractResult[0]:', resultHex);
-          
-          const orderId = parseInt(resultHex, 16);
-          console.log('✅ Extracted orderId from contractResult:', orderId);
-          
-          if (!isNaN(orderId) && orderId > 0) {
-            paymentEvents.push({ orderId });
-            console.log('✅ Successfully extracted orderId:', orderId);
-          }
-        } catch (error) {
-          console.error('❌ Error extracting from contractResult:', error);
-        }
-      }
-
-      // STRATEGY 2: Parse PaymentReceived events (for batch orders or as fallback)
-      if (paymentEvents.length === 0) {
-        console.log('🔍 Attempting to extract orderIds from event logs...');
+      // Check if sender has token account and sufficient balance
+      let senderAccountExists = true;
+      try {
+        const senderAccount = await getAccount(connection, senderTokenAddress);
+        const senderBalance = Number(senderAccount.amount);
         
-        // PaymentReceived event signature hash
-        const PAYMENT_RECEIVED_SIGNATURE = '62b4265ef816f751a94c5c93fa40a90302c6924509b973ed4094dcf30c6c61ed';
-        
-        if (txInfo.log && txInfo.log.length > 0) {
-          console.log('🔍 Total logs found:', txInfo.log.length);
-          
-          for (const log of txInfo.log) {
-            // Check if this is a PaymentReceived event
-            if (log.topics && log.topics.length >= 3 && log.topics[0] === PAYMENT_RECEIVED_SIGNATURE) {
-              try {
-                // For PaymentReceived(uint256 indexed orderId, address indexed buyer, ...)
-                // topics[0] = event signature hash
-                // topics[1] = orderId (first indexed param)
-                // topics[2] = buyer address (second indexed param)
-                
-                const orderIdHex = log.topics[1];
-                console.log('📝 OrderId hex from event topics[1]:', orderIdHex);
-                
-                const orderId = parseInt(orderIdHex, 16);
-                console.log('✅ Found PaymentReceived event with orderId:', orderId);
-                
-                if (!isNaN(orderId) && orderId > 0) {
-                  paymentEvents.push({ orderId });
-                }
-              } catch (error) {
-                console.error('❌ Error parsing orderId from event:', error);
-              }
-            }
-          }
+        if (senderBalance < amountInSmallestUnit) {
+          toast.error(`Insufficient balance. You have ${(senderBalance / Math.pow(10, decimals)).toFixed(2)} ${getTokenSymbolByMint(selectedTokenMint)}`);
+          setPlacingOrder(false);
+          return;
         }
+      } catch {
+        senderAccountExists = false;
+        toast.error('You do not have a token account for this token. Please add tokens to your wallet first.');
+        setPlacingOrder(false);
+        return;
       }
 
-      console.log('📋 Extracted payment events:', paymentEvents);
+      // Create transaction
+      const transaction = new Transaction();
 
-      const onChainOrderIds = paymentEvents.map(e => e.orderId.toString());
-
-      console.log('📋 On-chain order IDs:', onChainOrderIds);
-
-      // Validate we got order IDs
-      if (onChainOrderIds.length === 0) {
-        console.error('❌ CRITICAL: No order IDs extracted from transaction!');
-        console.error('Transaction hash:', paymentTx);
-        console.error('Transaction info:', JSON.stringify(txInfo, null, 2));
-        throw new Error(
-          'Failed to extract order ID from blockchain transaction. ' +
-          'The payment was successful but order tracking failed. ' +
-          'Please contact support with transaction hash: ' + paymentTx
+      // Check if treasury token account exists, if not create it
+      try {
+        await getAccount(connection, treasuryTokenAddress);
+        console.log('✅ Treasury token account exists');
+      } catch {
+        console.log('📝 Creating associated token account for treasury...');
+        
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          senderPubkey, // payer
+          treasuryTokenAddress, // associatedToken
+          treasuryPubkey, // owner
+          tokenMintPubkey // mint
         );
+        
+        transaction.add(createATAInstruction);
       }
 
-      // 4️⃣ Save order to backend
-      const tokenSymbol = getTokenSymbolByAddress(selectedToken);
+      // Add transfer instruction (deposit to treasury)
+      const transferInstruction = createTransferInstruction(
+        senderTokenAddress, // source
+        treasuryTokenAddress, // destination
+        senderPubkey, // owner
+        amountInSmallestUnit, // amount
+        [], // multiSigners
+        TOKEN_PROGRAM_ID
+      );
+
+      transaction.add(transferInstruction);
+
+      console.log('📤 Sending deposit transaction...');
+      
+      // Get recent blockhash
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = senderPubkey;
+
+      // Send transaction
+      const signatureToast = toast.loading('Please confirm the deposit in your wallet...');
+      
+      depositSignature = await sendTransaction(transaction, connection);
+      
+      toast.dismiss(signatureToast);
+      console.log('📋 Deposit transaction signature:', depositSignature);
+      
+      // Wait for confirmation
+      const confirmationToast = toast.loading('Waiting for blockchain confirmation...');
+      await waitForTransactionConfirmation(depositSignature);
+      toast.dismiss(confirmationToast);
+      toast.success('Deposit confirmed on blockchain!');
+
+      // Now save order to backend
+      const tokenSymbol = getTokenSymbolByMint(selectedTokenMint);
+      const isSingleItem = items.length === 1;
 
       if (isSingleItem) {
         const item = items[0];
         
-        const onChainOrderId = Number(onChainOrderIds[0]);
-        
-        if (!onChainOrderId || onChainOrderId === 0) {
-          throw new Error('Invalid order ID extracted from blockchain');
-        }
-
         const singleOrderPayload = {
           productId: item.id,
           quantity: item.quantity,
           amount: (item.price * item.quantity).toFixed(2),
           token: tokenSymbol,
-          onChainOrderId: onChainOrderId,
-          transactionHash: paymentTx,
+          transactionHash: depositSignature,
           buyer: walletAddress,
+          blockchain: 'solana',
+          tokenMint: selectedTokenMint,
+          depositAmount: totalAmount.toFixed(2)
         };
 
         console.log('📤 Single order payload:', singleOrderPayload);
@@ -668,28 +573,22 @@ const Checkout = () => {
         );
 
       } else {
-        // Validate all order IDs
-        for (let i = 0; i < items.length; i++) {
-          if (!onChainOrderIds[i] || Number(onChainOrderIds[i]) === 0) {
-            throw new Error(`Invalid order ID for item ${i + 1} extracted from blockchain`);
-          }
-        }
-        
         const orderItems = items.map((item, index) => ({
           productId: item.id,
           quantity: item.quantity,
           amount: (item.price * item.quantity).toFixed(2),
-          onChainOrderId: Number(onChainOrderIds[index]),
+          itemIndex: index
         }));
 
         const batchOrderPayload = {
           items: orderItems,
           token: tokenSymbol,
-          transactionHash: paymentTx,
-          totalAmount: items
-            .reduce((sum, item) => sum + item.price * item.quantity, 0)
-            .toFixed(2),
+          transactionHash: depositSignature,
+          totalAmount: totalAmount.toFixed(2),
           buyer: walletAddress,
+          blockchain: 'solana',
+          tokenMint: selectedTokenMint,
+          depositAmount: totalAmount.toFixed(2)
         };
 
         console.log('📤 Batch order payload:', batchOrderPayload);
@@ -720,26 +619,24 @@ const Checkout = () => {
       let errorMessage = 'Failed to place order';
       
       if (err.message) {
-        if (err.message.includes('Confirmation declined') || err.message.includes('cancelled')) {
+        if (err.message.includes('User rejected') || err.message.includes('cancelled')) {
           errorMessage = 'Transaction was cancelled';
         } else if (err.message.includes('confirmation timeout')) {
-          // Show a more helpful message with the transaction hash if available
-          errorMessage = 'Transaction is taking longer than expected. The transaction may still be processing on the blockchain. Please check TronScan and contact support if needed.';
+          errorMessage = 'Transaction is taking longer than expected. The transaction may still be processing on the blockchain.';
           
-          // Show additional toast with link if we have transaction hash
-          if (paymentTx) {
+          if (depositSignature) {
             setTimeout(() => {
               toast.error(
                 <div>
-                  <div>Transaction Hash: {paymentTx.slice(0, 10)}...{paymentTx.slice(-8)}</div>
+                  <div>Signature: {depositSignature.slice(0, 10)}...{depositSignature.slice(-8)}</div>
                   <div className="mt-2">
                     <a 
-                      href={`https://tronscan.org/#/transaction/${paymentTx}`}
+                      href={`https://explorer.solana.com/tx/${depositSignature}?cluster=mainnet-beta`}
                       target="_blank" 
                       rel="noopener noreferrer"
                       style={{ color: '#fff', textDecoration: 'underline' }}
                     >
-                      View on TronScan →
+                      View on Solana Explorer →
                     </a>
                   </div>
                 </div>,
@@ -747,12 +644,8 @@ const Checkout = () => {
               );
             }, 1000);
           }
-        } else if (err.message.includes('bandwidth')) {
-          errorMessage = 'Insufficient bandwidth. Please try again later.';
-        } else if (err.message.includes('energy')) {
-          errorMessage = 'Insufficient energy. Please try again later.';
-        } else if (err.message.includes('Transaction failed')) {
-          errorMessage = err.message;
+        } else if (err.message.includes('insufficient')) {
+          errorMessage = 'Insufficient balance for transaction';
         } else {
           errorMessage = err.message;
         }
@@ -922,17 +815,17 @@ const Checkout = () => {
                 {items.map((item) => (
                   <div key={item.id} className="flex-between gap-24 mb-32">
                     <div className="flex-align gap-12">
-                      <span className="text-gray-900 fw-normal text-md  w-144">
+                      <span className="text-gray-900 fw-normal text-md w-144">
                         {item.name}
                       </span>
-                      <span className="text-gray-900 fw-normal text-md ">
+                      <span className="text-gray-900 fw-normal text-md">
                         <i className="ph-bold ph-x" />
                       </span>
-                      <span className="text-gray-900 fw-semibold text-md ">
+                      <span className="text-gray-900 fw-semibold text-md">
                         {item.quantity}
                       </span>
                     </div>
-                    <span className="text-gray-900 fw-bold text-md ">
+                    <span className="text-gray-900 fw-bold text-md">
                       ${(item.price * item.quantity).toFixed(2)}
                     </span>
                   </div>
@@ -963,9 +856,23 @@ const Checkout = () => {
                     {paymentMethod === 'wallet' && isConnected && (
                       <div className="alert alert-info py-12 px-16 text-sm">
                         {(() => {
-                          const symbol = getTokenSymbolByAddress(selectedToken);
+                          const symbol = getTokenSymbolByMint(selectedTokenMint);
+                          const backendBalance = walletBalance[`${symbol}_BACKEND`] || 0;
                           return symbol
-                            ? `Available: ${walletBalance[symbol].toString()} ${symbol}`
+                            ? `Available: ${backendBalance.toString()} ${symbol}`
+                            : 'Unsupported token';
+                        })()}
+                      </div>
+                    )}
+                    {paymentMethod === 'direct' && isConnected && (
+                      <div className="alert alert-warning py-12 px-16 text-sm">
+                        {(() => {
+                          const symbol = getTokenSymbolByMint(selectedTokenMint);
+                          console.log('On-chain Symbol da naa te wallet balance', symbol, walletBalance);
+                          console.log('On-chain Symbol da naa te wallet balance', symbol, walletBalance);
+                          const onChainBalance = walletBalance[symbol] || 0;
+                          return symbol
+                            ? `Wallet Balance: ${onChainBalance.toString()} ${symbol}`
                             : 'Unsupported token';
                         })()}
                       </div>
@@ -976,28 +883,31 @@ const Checkout = () => {
                     <label className="fw-semibold mb-8 d-block">Token:</label>
                     <select
                       className="form-control"
-                      value={selectedToken}
-                      onChange={(e) => setSelectedToken(e.target.value)}
+                      value={selectedTokenMint}
+                      onChange={(e) => {
+                        setSelectedTokenMint(e.target.value);
+                        localStorage.setItem('selectedPaymentToken', e.target.value);
+                      }}
                       disabled={placingOrder}
                     >
-                      <option value={REACT_APP_USDT_ADDRESS}>USDT (TRC20)</option>
-                      <option value={REACT_APP_USDC_ADDRESS}>USDC (TRC20)</option>
+                      <option value={REACT_APP_USDT_MINT}>USDT (SPL)</option>
+                      <option value={REACT_APP_USDC_MINT}>USDC (SPL)</option>
                     </select>
                   </div>
 
                   <div className="mb-32 flex-between gap-8">
-                    <span className="text-gray-900  text-xl fw-semibold">
+                    <span className="text-gray-900 text-xl fw-semibold">
                       Subtotal
                     </span>
-                    <span className="text-gray-900  text-md fw-bold">
+                    <span className="text-gray-900 text-md fw-bold">
                       ${subtotal.toFixed(2)}
                     </span>
                   </div>
                   <div className="mb-0 flex-between gap-8">
-                    <span className="text-gray-900  text-xl fw-semibold">
+                    <span className="text-gray-900 text-xl fw-semibold">
                       Total
                     </span>
-                    <span className="text-gray-900  text-md fw-bold">
+                    <span className="text-gray-900 text-md fw-bold">
                       ${subtotal.toFixed(2)}
                     </span>
                   </div>
@@ -1014,7 +924,7 @@ const Checkout = () => {
 
               {!isConnected && (
                 <p className="text-center text-danger mt-3">
-                  Please connect your TronLink wallet to place order
+                  Please connect your Phantom wallet to place order
                 </p>
               )}
             </div>
