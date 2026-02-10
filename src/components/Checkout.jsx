@@ -4,11 +4,11 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS } from '../config/api';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { 
-  PublicKey, 
+import {
+  PublicKey,
   Transaction,
 } from '@solana/web3.js';
-import { 
+import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
@@ -16,15 +16,16 @@ import {
   getAccount
 } from '@solana/spl-token';
 
-const { 
+const {
   REACT_APP_PROGRAM_ID,
-  REACT_APP_USDT_MINT, 
+  REACT_APP_USDT_MINT,
   REACT_APP_USDC_MINT,
   REACT_APP_TREASURY_PUBKEY
 } = process.env;
 
 const getTokenSymbolByMint = (mint) => {
   if (!mint) return null;
+  console.log("eh mint compare ho rea actual address de nal:", mint);
   if (mint === REACT_APP_USDT_MINT) return 'USDT';
   if (mint === REACT_APP_USDC_MINT) return 'USDC';
   return null;
@@ -34,7 +35,7 @@ const Checkout = () => {
   const navigate = useNavigate();
   const { connection } = useConnection();
   const { publicKey, signTransaction, sendTransaction, connected } = useWallet();
-  
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [placingOrder, setPlacingOrder] = useState(false);
@@ -77,6 +78,9 @@ const Checkout = () => {
 
     try {
       const tokenSymbol = getTokenSymbolByMint(selectedTokenMint);
+
+      console.log("hi, this is the token symbol for fetching balance", tokenSymbol, selectedTokenMint);
+
       if (!tokenSymbol) {
         toast.error('Unsupported token selected');
         return;
@@ -85,7 +89,7 @@ const Checkout = () => {
       // Get on-chain balance
       const tokenMintPubkey = new PublicKey(selectedTokenMint);
       const walletPubkey = new PublicKey(walletAddress);
-      
+
       const associatedTokenAddress = await getAssociatedTokenAddress(
         tokenMintPubkey,
         walletPubkey
@@ -95,7 +99,7 @@ const Checkout = () => {
         const tokenAccount = await getAccount(connection, associatedTokenAddress);
         // SPL tokens typically use 9 decimals, but check the mint for accuracy
         const balance = Number(tokenAccount.amount) / Math.pow(10, 6);
-        
+
         setWalletBalance(prev => ({
           ...prev,
           [tokenSymbol]: balance
@@ -312,7 +316,7 @@ const Checkout = () => {
       toast.error('Unsupported token selected');
       return;
     }
-    
+
     const totalAmount = subtotal;
     const backendBalance = walletBalance[`${tokenSymbol}_BACKEND`] || 0;
 
@@ -374,34 +378,34 @@ const Checkout = () => {
   // Wait for transaction confirmation on Solana
   const waitForTransactionConfirmation = async (signature, maxAttempts = 30) => {
     console.log(`🔍 Waiting for transaction confirmation: ${signature}`);
-    
+
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const status = await connection.getSignatureStatus(signature);
-        
+
         console.log(`📋 Transaction status (Attempt ${i + 1}/${maxAttempts}):`, status);
-        
-        if (status?.value?.confirmationStatus === 'confirmed' || 
-            status?.value?.confirmationStatus === 'finalized') {
-          
+
+        if (status?.value?.confirmationStatus === 'confirmed' ||
+          status?.value?.confirmationStatus === 'finalized') {
+
           if (status.value.err) {
             console.error(`❌ Transaction failed:`, status.value.err);
             throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
           }
-          
+
           console.log(`✅ Transaction confirmed successfully after ${i + 1} attempts`);
           return status;
         }
-        
+
         console.log(`⏳ Waiting for confirmation... Attempt ${i + 1}/${maxAttempts}`);
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
+
       } catch (error) {
         console.log(`⏳ Error checking transaction... Attempt ${i + 1}/${maxAttempts}:`, error.message);
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-    
+
     throw new Error('Transaction confirmation timeout - Please check Solana Explorer to verify transaction status');
   };
 
@@ -422,7 +426,7 @@ const Checkout = () => {
     }
 
     setPlacingOrder(true);
-    
+
     let depositSignature = null;
 
     try {
@@ -479,7 +483,7 @@ const Checkout = () => {
       try {
         const senderAccount = await getAccount(connection, senderTokenAddress);
         const senderBalance = Number(senderAccount.amount);
-        
+
         if (senderBalance < amountInSmallestUnit) {
           toast.error(`Insufficient balance. You have ${(senderBalance / Math.pow(10, decimals)).toFixed(2)} ${getTokenSymbolByMint(selectedTokenMint)}`);
           setPlacingOrder(false);
@@ -501,14 +505,14 @@ const Checkout = () => {
         console.log('✅ Treasury token account exists');
       } catch {
         console.log('📝 Creating associated token account for treasury...');
-        
+
         const createATAInstruction = createAssociatedTokenAccountInstruction(
           senderPubkey, // payer
           treasuryTokenAddress, // associatedToken
           treasuryPubkey, // owner
           tokenMintPubkey // mint
         );
-        
+
         transaction.add(createATAInstruction);
       }
 
@@ -525,7 +529,7 @@ const Checkout = () => {
       transaction.add(transferInstruction);
 
       console.log('📤 Sending deposit transaction...');
-      
+
       // Get recent blockhash
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
@@ -533,12 +537,12 @@ const Checkout = () => {
 
       // Send transaction
       const signatureToast = toast.loading('Please confirm the deposit in your wallet...');
-      
+
       depositSignature = await sendTransaction(transaction, connection);
-      
+
       toast.dismiss(signatureToast);
       console.log('📋 Deposit transaction signature:', depositSignature);
-      
+
       // Wait for confirmation
       const confirmationToast = toast.loading('Waiting for blockchain confirmation...');
       await waitForTransactionConfirmation(depositSignature);
@@ -551,7 +555,7 @@ const Checkout = () => {
 
       if (isSingleItem) {
         const item = items[0];
-        
+
         const singleOrderPayload = {
           productId: item.id,
           quantity: item.quantity,
@@ -617,22 +621,22 @@ const Checkout = () => {
       console.error('Order placement failed:', err);
 
       let errorMessage = 'Failed to place order';
-      
+
       if (err.message) {
         if (err.message.includes('User rejected') || err.message.includes('cancelled')) {
           errorMessage = 'Transaction was cancelled';
         } else if (err.message.includes('confirmation timeout')) {
           errorMessage = 'Transaction is taking longer than expected. The transaction may still be processing on the blockchain.';
-          
+
           if (depositSignature) {
             setTimeout(() => {
               toast.error(
                 <div>
                   <div>Signature: {depositSignature.slice(0, 10)}...{depositSignature.slice(-8)}</div>
                   <div className="mt-2">
-                    <a 
+                    <a
                       href={`https://explorer.solana.com/tx/${depositSignature}?cluster=mainnet-beta`}
-                      target="_blank" 
+                      target="_blank"
                       rel="noopener noreferrer"
                       style={{ color: '#fff', textDecoration: 'underline' }}
                     >
@@ -890,8 +894,8 @@ const Checkout = () => {
                       }}
                       disabled={placingOrder}
                     >
-                      <option value={REACT_APP_USDT_MINT}>USDT (SPL)</option>
                       <option value={REACT_APP_USDC_MINT}>USDC (SPL)</option>
+                      <option value={REACT_APP_USDT_MINT}>USDT (SPL)</option>
                     </select>
                   </div>
 

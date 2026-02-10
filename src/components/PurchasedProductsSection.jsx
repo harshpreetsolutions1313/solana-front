@@ -240,7 +240,10 @@ const PurchasedProductsSection = () => {
                               </span>
                             ) : item.transactionHash ? (
                               <a
-                                href={`https://nile.tronscan.org/#/transaction/${item.transactionHash}`}
+                                // href={`https://nile.tronscan.org/#/transaction/${item.transactionHash}`}
+                                href={`https://solscan.io/tx/${item.transactionHash}?cluster=devnet`}
+                                // https://solscan.io/tx
+
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className='text-sm text-main-two-600 hover-text-decoration-underline'

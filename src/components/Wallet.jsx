@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { Program, AnchorProvider, BN } from '@coral-xyz/anchor';
-import { 
-  TOKEN_PROGRAM_ID, 
+import {
+  TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
   getAccount
@@ -17,7 +17,8 @@ import IDL from '../config/solana/platform_treasury_idl.json';
 const PROGRAM_ID = new PublicKey('558HkyiK5Ki8gh7aQBzBmRvimrrR9ZuRJgvzni4uZGRg');
 
 // Token Mints (DEVNET)
-const USDT_MINT = new PublicKey('DAwBSXe6w9g37wdE2tCrFbho3QHKZi4PjuBytQCULap2');
+// const USDT_MINT = new PublicKey('DAwBSXe6w9g37wdE2tCrFbho3QHKZi4PjuBytQCULap2');
+const USDT_MINT = new PublicKey('Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr');
 // const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
 const USDC_MINT = new PublicKey('Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr');
 
@@ -31,7 +32,7 @@ const Wallet = () => {
   const [funding, setFunding] = useState(false);
   const [program, setProgram] = useState(null);
   const [treasuryPda, setTreasuryPda] = useState(null);
-  
+
   const [balances, setBalances] = useState({
     USDT: { balance: 0, totalFunded: 0, totalSpent: 0, available: 0 },
     USDC: { balance: 0, totalFunded: 0, totalSpent: 0, available: 0 }
@@ -49,10 +50,10 @@ const Wallet = () => {
         wallet,
         { commitment: 'confirmed' }
       );
-      
+
       const program = new Program(IDL, PROGRAM_ID, provider);
       setProgram(program);
-      
+
       // Find treasury PDA
       const [pda] = PublicKey.findProgramAddressSync(
         [Buffer.from('treasury')],
@@ -311,17 +312,24 @@ const Wallet = () => {
             <div className="mb-24">
               <div className="flex-align gap-16 mb-16">
                 <button
-                  className={`btn ${selectedToken === 'USDT' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
-                  onClick={() => setSelectedToken('USDT')}
-                >
-                  USDT (SPL)
-                </button>
-                <button
                   className={`btn ${selectedToken === 'USDC' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
                   onClick={() => setSelectedToken('USDC')}
                 >
                   USDC (SPL)
                 </button>
+                <button
+                  className={`btn ${selectedToken === 'USDT' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
+                  onClick={() => setSelectedToken('USDT')}
+                  disabled
+                >
+                  USDT (SPL)
+                </button>
+                {/* <button
+                  className={`btn ${selectedToken === 'USDC' ? 'btn-main-two' : 'btn-outline-main-two'} py-12 px-24`}
+                  onClick={() => setSelectedToken('USDC')}
+                >
+                  USDC (SPL)
+                </button> */}
               </div>
             </div>
 
@@ -330,7 +338,7 @@ const Wallet = () => {
               <div className="mb-16">
                 <p className="text-gray-600 text-sm mb-8">Available Balance</p>
                 <h3 className="text-2xl fw-bold text-main-two-600">
-                  {currentBalance.available.toString()} {selectedToken}
+                  {currentBalance.available.toFixed(2)} {selectedToken}
                 </h3>
               </div>
 

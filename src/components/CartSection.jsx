@@ -5,7 +5,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { API_ENDPOINTS } from '../config/api';
 
-const { REACT_APP_USDT_ADDRESS, REACT_APP_USDC_ADDRESS } = process.env;
+const { REACT_APP_USDT_MINT, REACT_APP_USDC_MINT } = process.env;
 
 const CartSection = () => {
   const navigate = useNavigate();
@@ -14,7 +14,7 @@ const CartSection = () => {
   const [error, setError] = useState(null);
   const [updatingId, setUpdatingId] = useState(null);
 
-  const [selectedToken, setSelectedToken] = useState(REACT_APP_USDT_ADDRESS);
+  const [selectedToken, setSelectedToken] = useState(REACT_APP_USDC_MINT);
 
   const authHeaders = () => {
     const token = localStorage.getItem('userToken');
@@ -279,8 +279,8 @@ const CartSection = () => {
                   value={selectedToken}
                   onChange={(e) => setSelectedToken(e.target.value)}
                 >
-                  <option value={REACT_APP_USDT_ADDRESS}>USDT</option>
-                  <option value={REACT_APP_USDC_ADDRESS}>USDC</option>
+                  <option value={REACT_APP_USDT_MINT}>USDT</option>
+                  <option value={REACT_APP_USDC_MINT}>USDC</option>
                 </select>
               </div>
 
