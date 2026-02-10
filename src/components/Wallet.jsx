@@ -26,7 +26,7 @@ const Wallet = () => {
   const { connection } = useConnection();
   const wallet = useWallet();
 
-  const [selectedToken, setSelectedToken] = useState('USDT');
+  const [selectedToken, setSelectedToken] = useState('USDC');
   const [fundAmount, setFundAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [funding, setFunding] = useState(false);
