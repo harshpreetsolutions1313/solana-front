@@ -10,13 +10,74 @@ import { WalletReadyState } from '@solana/wallet-adapter-base';
 const HeaderOne = () => {
   const [scroll, setScroll] = useState(false);
 
-  // Solana Wallet - Direct Phantom connection
+  // Solana Wallet - Desktop & Mobile support
   const { publicKey, connected, disconnect, wallets, select, connect } = useWallet();
   const walletAddress = publicKey?.toBase58();
   const isConnected = connected;
 
-  // Function to connect directly to Phantom
-  const connectPhantomWallet = useCallback(async () => {
+  const navigate = useNavigate();
+
+  // Mobile detection
+  const isMobile = () => {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  };
+
+  // Check if Phantom mobile app is installed
+  const isPhantomInstalled = () => {
+    if (typeof window === 'undefined') return false;
+    return window.phantom?.solana?.isPhantom;
+  };
+
+  // Mobile deep link connection to Phantom
+  const connectPhantomMobile = useCallback(() => {
+    try {
+      const dappUrl = window.location.origin;
+      const redirectUrl = encodeURIComponent(`${dappUrl}/wallet-redirect`);
+      
+      // Phantom mobile deep link format
+      const deepLink = `https://phantom.app/ul/browse/${encodeURIComponent(dappUrl)}?ref=${redirectUrl}`;
+      
+      // Try to open Phantom app
+      window.location.href = deepLink;
+      
+      toast.success('Opening Phantom app...', { duration: 2000 });
+      
+      // Fallback: If app doesn't open in 2.5 seconds, redirect to app store
+      const timeout = setTimeout(() => {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const storeUrl = isIOS 
+          ? 'https://apps.apple.com/app/phantom-solana-wallet/id1598432977'
+          : 'https://play.google.com/store/apps/details?id=app.phantom';
+        
+        toast('Phantom app not detected. Redirecting to app store...', {
+          icon: '📱',
+          duration: 3000,
+        });
+        window.location.href = storeUrl;
+      }, 2500);
+
+      // Clear timeout if user comes back
+      const handleVisibilityChange = () => {
+        if (!document.hidden) {
+          clearTimeout(timeout);
+        }
+      };
+      
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      
+      return () => {
+        clearTimeout(timeout);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+      
+    } catch (error) {
+      console.error('Error opening Phantom mobile:', error);
+      toast.error('Failed to open Phantom app');
+    }
+  }, []);
+
+  // Desktop browser extension connection
+  const connectPhantomDesktop = useCallback(async () => {
     try {
       // Find Phantom wallet from available wallets
       const phantomWallet = wallets.find(
@@ -25,7 +86,6 @@ const HeaderOne = () => {
 
       if (!phantomWallet) {
         toast.error('Phantom wallet not found. Please install Phantom extension.');
-        // Redirect to Phantom installation
         window.open('https://phantom.app/', '_blank');
         return;
       }
@@ -49,7 +109,7 @@ const HeaderOne = () => {
           if (err.message?.includes('User rejected')) {
             toast.error('Connection rejected by user');
           } else {
-            // toast.error('Failed to connect wallet');
+            toast.error('Failed to connect wallet');
           }
         }
       }, 100);
@@ -59,6 +119,50 @@ const HeaderOne = () => {
       toast.error('Failed to connect to Phantom wallet');
     }
   }, [wallets, select, connect]);
+
+  // Unified connection handler - detects mobile vs desktop
+  const connectPhantomWallet = useCallback(() => {
+    const mobile = isMobile();
+    
+    console.log('Connect wallet clicked - Mobile:', mobile);
+    
+    if (mobile) {
+      // Check if we're in Phantom's in-app browser
+      if (isPhantomInstalled()) {
+        console.log('In Phantom app browser - using desktop flow');
+        connectPhantomDesktop();
+      } else {
+        console.log('Mobile browser - using deep link');
+        connectPhantomMobile();
+      }
+    } else {
+      console.log('Desktop browser - using extension');
+      connectPhantomDesktop();
+    }
+  }, [connectPhantomDesktop, connectPhantomMobile]);
+
+  // Handle wallet redirect (when returning from Phantom mobile app)
+  useEffect(() => {
+    // Check if we're on the redirect page or if Phantom is now available
+    const checkPhantomConnection = async () => {
+      if (window.location.pathname === '/wallet-redirect') {
+        // User returned from Phantom app
+        if (isPhantomInstalled()) {
+          try {
+            await connectPhantomDesktop();
+            // Redirect back to home or previous page
+            setTimeout(() => {
+              navigate('/');
+            }, 1000);
+          } catch (error) {
+            console.error('Failed to connect after redirect:', error);
+          }
+        }
+      }
+    };
+
+    checkPhantomConnection();
+  }, [navigate, connectPhantomDesktop]);
 
   useEffect(() => {
     window.onscroll = () => {
@@ -208,7 +312,7 @@ const HeaderOne = () => {
 
     // 🚫 If not logged in → go directly to login page
     if (!isLoggedIn) {
-      navigate('/account') // or '/login' if that is your login route
+      navigate('/account')
       return
     }
 
@@ -217,7 +321,7 @@ const HeaderOne = () => {
   }
 
   // Search state
-  const navigate = useNavigate();
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -225,7 +329,7 @@ const HeaderOne = () => {
   const [searchError, setSearchError] = useState(null);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
-  // Categories state (for secondary navbar AND search dropdown)
+  // Categories state
   const [categories, setCategories] = useState([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
 
@@ -442,7 +546,7 @@ const HeaderOne = () => {
         </button>
         <div className='mobile-menu__inner'>
           <Link to='/' className='mobile-menu__logo'>
-            <img src='/assets/images/logo/logo.png' alt='Logoo' />
+            <img src='/assets/images/logo/logo.png' alt='Logo' />
           </Link>
           <div className='mobile-menu__menu'>
             <ul className='nav-menu flex-align nav-menu--mobile'>
@@ -737,7 +841,7 @@ const HeaderOne = () => {
           <nav className='header-inner d-none d-lg-flex align-items-center' style={{position: 'relative', zIndex: 10, justifyContent: 'space-between' }}>
 
             <Link to='/' className='link' style={{ flexShrink: 0}}>
-              <img src='/assets/images/logo/logo.png' alt='Loogo' style={{ height: '40px' }} />
+              <img src='/assets/images/logo/logo.png' alt='Logo' style={{ height: '40px' }} />
             </Link>
 
             {/* ================= Search Bar with Category Dropdown ================= */}
@@ -877,7 +981,7 @@ const HeaderOne = () => {
                     )}
                   </div>
 
-                  {/* Phantom Wallet Button - Desktop - DIRECT CONNECTION */}
+                  {/* Phantom Wallet Button - Desktop */}
                   <div style={{ position: 'relative' }}>
                     {isConnected ? (
                       <button
@@ -1049,7 +1153,7 @@ const HeaderOne = () => {
                   )}
                 </div>
 
-                {/* Phantom Wallet Button - Mobile - DIRECT CONNECTION */}
+                {/* Phantom Wallet Button - Mobile with Deep Link Support */}
                 <div style={{ position: 'relative' }}>
                   {isConnected ? (
                     <button
@@ -1067,6 +1171,7 @@ const HeaderOne = () => {
                       onClick={connectPhantomWallet}
                       className='bg-warning-600 text-white py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2'
                       style={{ fontSize: '12px', minHeight: '40px' }}
+                      title="Connect Phantom Wallet"
                     >
                       <i className='ph ph-wallet' style={{ fontSize: '16px' }} />
                     </button>

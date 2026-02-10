@@ -23,6 +23,7 @@ import PurchasedProductsSection from "./components/PurchasedProductsSection";
 import { Toaster } from 'react-hot-toast';
 import PurchasedProductsPage from "./pages/PurchasedProductsPage";
 import { SolanaWalletProvider } from './components/SolanaWalletProvider';
+import WalletRedirect from './components/WalletRedirect';
 // import { WalletProvider } from './context/WalletContext';
 
 // import { createAppKit } from '@reown/appkit/react'
@@ -90,6 +91,7 @@ function App() {
         <Route exact path='/wishlist' element={<WishlistPage />} />
         <Route exact path='/account' element={<AccountPage />} />
         <Route exact path='/purchased-products' element={<PurchasedProductsPage />} />
+        <Route path="/wallet-redirect" element={<WalletRedirect />} />
         {/* <Route exact path='/blog' element={<BlogPage />} />
         <Route exact path='/blog-details' element={<BlogDetailsPage />} />
         <Route exact path='/contact' element={<ContactPage />} />
