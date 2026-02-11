@@ -902,7 +902,7 @@ const HeaderOne = () => {
                   <div ref={cartMenuRef} className='position-relative me-8' style={{ zIndex: 3500 }}>
                     <button
                       type='button'
-                      onClick={(e) => { e.stopPropagation(); toggleCartMenu(); }}
+                      onClick={(e) => { e.stopPropagation(); navigate('/cart'); }}
                       className='bg-white border border-gray-100 text-gray-800 py-8 px-16 rounded-pill d-inline-flex align-items-center gap-8 shadow-sm'
                       style={{ cursor: 'pointer', position: 'relative', zIndex: 3500 }}
                     >
@@ -910,7 +910,7 @@ const HeaderOne = () => {
                       <span className='badge rounded-pill bg-main-600 text-white px-8 py-4'>
                         {cartLoading ? '…' : cartCount}
                       </span>
-                      <i className={`ph ${cartMenuOpen ? 'ph-caret-up' : 'ph-caret-down'}`} />
+                      {/* <i className={`ph ${cartMenuOpen ? 'ph-caret-up' : 'ph-caret-down'}`} /> */}
                     </button>
 
                     {cartMenuOpen && (
@@ -1025,7 +1025,7 @@ const HeaderOne = () => {
                 <div ref={cartMenuRef} className='position-relative'>
                   <button
                     type='button'
-                    onClick={(e) => { e.stopPropagation(); toggleCartMenu(); }}
+                    onClick={(e) => { e.stopPropagation(); navigate('/cart'); }}
                     className='bg-white border border-gray-100 text-gray-800 py-2 px-3 rounded-pill d-inline-flex align-items-center gap-2 shadow-sm'
                     style={{ fontSize: '14px', minHeight: '40px', cursor: 'pointer' }}
                   >
