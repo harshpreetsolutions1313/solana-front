@@ -436,13 +436,12 @@ const Checkout = () => {
         return;
       }
 
-      const decimals = 6; // Solana SPL tokens use 9 decimals
+      const decimals = 6;
 
       console.log('🔄 Starting Solana payment process:', {
         itemCount: items.length,
         walletAddress,
         selectedTokenMint,
-        treasuryPubkey: REACT_APP_TREASURY_PUBKEY
       });
 
       // Calculate total amount
@@ -457,20 +456,23 @@ const Checkout = () => {
         amountInSmallestUnit: amountInSmallestUnit.toString()
       });
 
-      // Get token mint and treasury addresses
+      // Get token mint and sender addresses
       const tokenMintPubkey = new PublicKey(selectedTokenMint);
-      const treasuryPubkey = new PublicKey(REACT_APP_TREASURY_PUBKEY);
       const senderPubkey = publicKey;
 
-      // Get associated token addresses
+      // Get associated token address for sender
       const senderTokenAddress = await getAssociatedTokenAddress(
         tokenMintPubkey,
         senderPubkey
       );
 
-      const treasuryTokenAddress = await getAssociatedTokenAddress(
-        tokenMintPubkey,
-        treasuryPubkey
+      // ✅ Derive the treasury PDA token account using the same seeds as TreasuryApp.js
+      // Seeds: ['treasury', 'usdt'] or ['treasury', 'usdc']
+      const PROGRAM_ID_PUBKEY = new PublicKey(REACT_APP_PROGRAM_ID);
+      const tokenSymbolForPda = getTokenSymbolByMint(selectedTokenMint).toLowerCase(); // 'usdt' or 'usdc'
+      const [treasuryTokenAddress] = PublicKey.findProgramAddressSync(
+        [Buffer.from('treasury'), Buffer.from(tokenSymbolForPda)],
+        PROGRAM_ID_PUBKEY
       );
 
       console.log('📍 Token addresses:', {
@@ -479,7 +481,6 @@ const Checkout = () => {
       });
 
       // Check if sender has token account and sufficient balance
-      let senderAccountExists = true;
       try {
         const senderAccount = await getAccount(connection, senderTokenAddress);
         const senderBalance = Number(senderAccount.amount);
@@ -490,7 +491,6 @@ const Checkout = () => {
           return;
         }
       } catch {
-        senderAccountExists = false;
         toast.error('You do not have a token account for this token. Please add tokens to your wallet first.');
         setPlacingOrder(false);
         return;
@@ -499,30 +499,16 @@ const Checkout = () => {
       // Create transaction
       const transaction = new Transaction();
 
-      // Check if treasury token account exists, if not create it
-      try {
-        await getAccount(connection, treasuryTokenAddress);
-        console.log('✅ Treasury token account exists');
-      } catch {
-        console.log('📝 Creating associated token account for treasury...');
+      // NOTE: The treasury PDA token account is created during initialize() in TreasuryApp.js.
+      // No need to create it here — it already exists on-chain.
 
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          senderPubkey, // payer
-          treasuryTokenAddress, // associatedToken
-          treasuryPubkey, // owner
-          tokenMintPubkey // mint
-        );
-
-        transaction.add(createATAInstruction);
-      }
-
-      // Add transfer instruction (deposit to treasury)
+      // Add transfer instruction (deposit to treasury PDA token account)
       const transferInstruction = createTransferInstruction(
-        senderTokenAddress, // source
-        treasuryTokenAddress, // destination
-        senderPubkey, // owner
-        amountInSmallestUnit, // amount
-        [], // multiSigners
+        senderTokenAddress,      // source
+        treasuryTokenAddress,    // destination (PDA token account)
+        senderPubkey,            // owner
+        amountInSmallestUnit,    // amount
+        [],                      // multiSigners
         TOKEN_PROGRAM_ID
       );
 
@@ -872,7 +858,6 @@ const Checkout = () => {
                       <div className="alert alert-warning py-12 px-16 text-sm">
                         {(() => {
                           const symbol = getTokenSymbolByMint(selectedTokenMint);
-                          console.log('On-chain Symbol da naa te wallet balance', symbol, walletBalance);
                           console.log('On-chain Symbol da naa te wallet balance', symbol, walletBalance);
                           const onChainBalance = walletBalance[symbol] || 0;
                           return symbol
